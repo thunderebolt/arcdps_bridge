@@ -1,0 +1,95 @@
+name: Release Windows DLL
+
+on:
+  push:
+    branches: [ main, master ]
+  release:
+    types: [published]
+
+jobs:
+  build-windows-dll:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+      shell: bash
+      
+    - name: Build
+      run: |
+        cmake --build build --config Release --parallel
+      shell: bash
+      
+    - name: Find DLL
+      id: find-dll
+      run: |
+        $dll = Get-ChildItem -Path build -Recurse -Filter "*.dll" | Select-Object -First 1
+        if ($dll) {
+          echo "DLL_PATH=$($dll.FullName)" >> $env:GITHUB_OUTPUT
+          echo "DLL_NAME=$($dll.Name)" >> $env:GITHUB_OUTPUT
+        }
+      shell: pwsh
+      
+    - name: Upload DLL as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: arcdps_bridge_windows_dll
+        path: ${{ steps.find-dll.outputs.DLL_PATH }}
+        retention-days: 90
+
+  create-release:
+    needs: build-windows-dll
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download Windows DLL artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: arcdps_bridge_windows_dll
+        path: ./dll/
+        
+    - name: Create release notes
+      run: |
+        echo "## ArcDPS Bridge Release" > release_notes.md
+        echo "" >> release_notes.md
+        echo "This release contains the compiled Windows DLL for ArcDPS Bridge." >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Files included:" >> release_notes.md
+        echo "- `arcdps_bridge.dll` - The main ArcDPS extension" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Installation:" >> release_notes.md
+        echo "1. Download the DLL from the assets below" >> release_notes.md
+        echo "2. Place it in your Guild Wars 2 `bin64` directory" >> release_notes.md
+        echo "3. Restart Guild Wars 2" >> release_notes.md
+        
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        
+    - name: Upload DLL to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dll/arcdps_bridge.dll
+        asset_name: arcdps_bridge.dll
+        asset_content_type: application/x-dll

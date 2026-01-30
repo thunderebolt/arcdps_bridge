@@ -1,0 +1,130 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            compiler: msvc
+            build_type: Release
+          - os: windows-latest
+            compiler: msvc
+            build_type: Debug
+          - os: ubuntu-latest
+            compiler: gcc
+            build_type: Release
+          - os: ubuntu-latest
+            compiler: gcc
+            build_type: Debug
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      if: matrix.os == 'windows-latest'
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Setup MinGW
+      if: matrix.os == 'windows-latest' && matrix.compiler == 'gcc'
+      uses: egor-tensin/setup-mingw@v2
+      with:
+        version: latest
+        arch: x64
+        
+    - name: Install GCC
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential gcc g++ cmake
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      shell: bash
+      
+    - name: Build
+      run: |
+        cmake --build build --config ${{ matrix.build_type }} --parallel
+      shell: bash
+      
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: arcdps_bridge_${{ matrix.os }}_${{ matrix.compiler }}_${{ matrix.build_type }}
+        path: |
+          build/*.dll
+          build/*.so
+          build/*.dylib
+          build/*.a
+          build/*.lib
+        retention-days: 30
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+        
+    - name: Create release assets
+      run: |
+        # Create a zip file containing all build artifacts
+        cd artifacts
+        zip -r ../arcdps_bridge_release.zip .
+        
+    - name: Upload Release Assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./arcdps_bridge_release.zip
+        asset_name: arcdps_bridge_release.zip
+        asset_content_type: application/zip
+
+  build-windows-msvc:
+    runs-on: windows-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Configure CMake
+      run: |
+        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+      shell: bash
+      
+    - name: Build
+      run: |
+        cmake --build build --config Release --parallel
+      shell: bash
+      
+    - name: Upload Windows DLL
+      uses: actions/upload-artifact@v4
+      with:
+        name: arcdps_bridge_windows_release
+        path: build/*.dll
+        retention-days: 7
